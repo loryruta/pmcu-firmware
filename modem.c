@@ -6,34 +6,11 @@
 #include <string.h>
 
 #define MODEM_LOG_LENGTH 96
+#define MODEM_SYNC_RETRIALS 10
 
-char modem_res_cmp[MODEM_LOG_LENGTH];
+char modem_buffer[MODEM_LOG_LENGTH];
 char modem_log[MODEM_LOG_LENGTH];
 size_t modem_ret;
-
-circular_buffer at_cmd_buf;
-
-
-#define __modem_try(times, code) \
-    for (modem_ret = 0; modem_ret < times; modem_ret++) { \
-        code \
-    } \
-    if (modem_ret == times) { \
-        return SIM800L_MAX_RETRIALS_REACHED_ERROR; \
-    }
-
-#define __modem_try_once(code) \
-        __modem_try(1, code);
-
-#define __modem_expect_or_repeat(expected_response) \
-    if (modem_read(modem_res_cmp) != PMCU_OK) { \
-        continue; \
-    } \
-    if (strcmp(modem_res_cmp, expected_response) != 0) { \
-        PMCU_log(expected_response);\
-        PMCU_log(modem_res_cmp);\
-        continue; \
-    }
 
 PMCU_Error modem_read(char *buffer) {
     PMCU_Error error;
@@ -67,11 +44,19 @@ PMCU_Error modem_read(char *buffer) {
     return PMCU_OK;
 }
 
+PMCU_Error modem_read_and_expect(const char *expected) {
+    modem_read(modem_buffer);
+    if (strcmp(modem_buffer, expected) != 0) {
+        return SIM800L_UNEXPECTED_RESPONSE_ERROR;
+    } else {
+        return PMCU_OK;
+    }
+}
+
 void modem_execute(const char *cmd) {
     size_t i;
     i = 0;
     while (cmd[i] != '\0') {
-        circular_buffer_write(&at_cmd_buf, cmd[i]);
         uart_write(UART_A0, cmd[i]);
         i++;
     }
@@ -84,146 +69,139 @@ void modem_execute(const char *cmd) {
 }
 
 PMCU_Error modem_sync() {
-    circular_buffer_init(&at_cmd_buf);
+    size_t i;
 
-    uart_write(UART_A0, 27); // ESC if was connected
-    modem_read(modem_res_cmp);
-    __modem_try(10,
+    uart_write(UART_A0, 27); // 27 = ESC key, if was sending something exits
+
+    for (i = MODEM_SYNC_RETRIALS; i > 0; i--) {
         modem_execute("AT");
-        if (uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, 3) != PMCU_OK) {
+        if (uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, 3) != PMCU_OK) { // delay of 3 seconds
             continue;
         }
-        break;
-    );
+    }
+
     return PMCU_OK;
 }
 
 PMCU_Error modem_reset() {
-    // resets the modem config
     modem_execute("ATZ");
     uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, MODEM_COMMAND_TIMEOUT);
 
-    // disables echoes
     modem_execute("ATE0");
     uart_read_until_string(UART_A0, "\r", NULL, NULL, MODEM_COMMAND_TIMEOUT);
     if (uart_match_string(UART_A0, "\r\nOK\r\n", MODEM_COMMAND_TIMEOUT)) {
         return SIM800L_UNEXPECTED_RESPONSE_ERROR;
     }
 
-    __modem_try(10,
-        modem_execute("AT+CMEE=2");
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+CMEE=2");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
-    __modem_try(10,
-        modem_execute("AT+CIPSPRT=1");
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+CIPSPRT=1");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     return PMCU_OK;
 }
 
 PMCU_Error modem_get_imei(char *imei) {
-    __modem_try(10,
-        modem_execute("AT+CGSN");
-        modem_read(imei);
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+CGSN");
+    if ((pmcu_error = modem_read(imei)) != PMCU_OK) {
+        return pmcu_error;
+    }
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
+
     return PMCU_OK;
 }
 
 PMCU_Error modem_get_location(char *location) {
-    __modem_try(10,
-        modem_execute("AT+CIPGSMLOC=1,1");
-        modem_read(location);
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+CIPGSMLOC=1,1");
+    if ((pmcu_error = modem_read(location)) != PMCU_OK) {
+        return pmcu_error;
+    }
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
+
     return PMCU_OK;
 }
 
 PMCU_Error modem_gprs_attach() {
-    // attaches to gprs network
-    __modem_try(10,
-         modem_execute("AT+CGATT=1");
-         __modem_expect_or_repeat("OK");
-         break;
-    );
+    modem_execute("AT+CGATT=1");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // ************************************************** bearer profile creation for at+cipgsmloc
 
     // closes previous opened bearer profile (if any)
-    __modem_try(10,
-         modem_execute("AT+SAPBR=0,1");
-         modem_read(modem_res_cmp);
-         break;
-    );
+    modem_execute("AT+SAPBR=0,1");
+    if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // sets the connection type to gprs
-    __modem_try(10,
-         modem_execute("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
-         __modem_expect_or_repeat("OK");
-         break;
-    );
+    modem_execute("AT+SAPBR=3,1,\"Contype\",\"GPRS\"");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // sets apn to "TM"
-    __modem_try(10,
-        modem_execute("AT+SAPBR=3,1,\"APN\",\"TM\"");
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+SAPBR=3,1,\"APN\",\"TM\"");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // opens the created bearer profile
-    __modem_try(10,
-        modem_execute("AT+SAPBR=1,1");
-        __modem_expect_or_repeat("OK");
-        break;
-    );
+    modem_execute("AT+SAPBR=1,1");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // queries the created bearer
-    __modem_try(10,
-         modem_execute("AT+SAPBR=2,1");
-         modem_read(modem_res_cmp); // ip address string
-         __modem_expect_or_repeat("OK");
-         break;
-     );
+    modem_execute("AT+SAPBR=2,1");
+    if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+        return pmcu_error;
+    }
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // ************************************************** pdp context creation for tcp/ip network
 
     // deactivates current pdp context
-    __modem_try(10,
-         modem_execute("AT+CIPSHUT");
-         __modem_expect_or_repeat("SHUT OK");
-         break;
-     );
+    modem_execute("AT+CIPSHUT");
+    if ((pmcu_error = modem_read_and_expect("SHUT OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // sets single ip connection
-    __modem_try(10,
-         modem_execute("AT+CIPMUX=0");
-         __modem_expect_or_repeat("OK");
-         break;
-     );
+    modem_execute("AT+CIPMUX=0");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // starts task, sets apn, empty username and password
-    __modem_try(10,
-         modem_execute("AT+CSTT=\"TM\",\"\",\"\"");
-         __modem_expect_or_repeat("OK");
-         break;
-     );
+    modem_execute("AT+CSTT=\"TM\",\"\",\"\"");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // brings up wireless connection
-    __modem_try(10,
-         modem_execute("AT+CIICR");
-         __modem_expect_or_repeat("OK");
-         break;
-     );
+    modem_execute("AT+CIICR");
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // gets pdp ip address (should be equal to bearer profile's one)
     modem_execute("AT+CIFSR");
-    modem_read(modem_res_cmp);
+    if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     return PMCU_OK;
 }
@@ -248,44 +226,44 @@ int modem_gprs_detach() {
 
 PMCU_Error modem_tcp_connect(const char *host, const char *port) {
     modem_execute("AT+CIPCLOSE");
-    modem_read(modem_res_cmp);
+    if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     // connects to the tcp server
-    strcpy(modem_res_cmp, "AT+CIPSTART=\"TCP\",\"");
-    strcat(modem_res_cmp, host);
-    strcat(modem_res_cmp, "\",\"");
-    strcat(modem_res_cmp, port);
-    strcat(modem_res_cmp, "\"");
+    strcpy(modem_buffer, "AT+CIPSTART=\"TCP\",\"");
+    strcat(modem_buffer, host);
+    strcat(modem_buffer, "\",\"");
+    strcat(modem_buffer, port);
+    strcat(modem_buffer, "\"");
 
-    __modem_try(3,
-        modem_execute(modem_res_cmp);
-        __modem_expect_or_repeat("OK");
-
-        modem_read(modem_res_cmp);
-        if (strcmp(modem_res_cmp, "CONNECT OK") != 0 && strcmp(modem_res_cmp, "ALREADY CONNECT") != 0) {
-            continue;
-        }
-        break;
-    );
+    modem_execute(modem_buffer);
+    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
+    if ((pmcu_error = modem_read_and_expect("CONNECT OK")) != PMCU_OK) {
+        return pmcu_error;
+    }
 
     return PMCU_OK;
 }
 
 PMCU_Error modem_tcp_send(const uint8_t *buffer, size_t buffer_length) {
-    __modem_try(10,
-        modem_execute("AT+CIPSEND");
-        if (uart_read_until_string(UART_A0, "> ", NULL, NULL, MODEM_COMMAND_TIMEOUT) != PMCU_OK) {
-            continue;
-        }
-        uart_write_buffer(UART_A0, buffer, buffer_length);
-        uart_write(UART_A0, 0x1a); // ctrl z
+    modem_execute("AT+CIPSEND");
+    if ((pmcu_error = uart_read_until_string(UART_A0, "> ", NULL, NULL, MODEM_COMMAND_TIMEOUT)) != PMCU_OK) {
+        return pmcu_error;
+    }
 
-        modem_read(modem_res_cmp);
-        if (strcmp(modem_res_cmp, "SEND OK") != 0 && strcmp(modem_res_cmp, "OK") != 0) { // for some strange reason could return OK
-            continue;
-        }
-        break;
-    );
+    uart_write_buffer(UART_A0, buffer, buffer_length);
+    uart_write(UART_A0, 0x1a); // ctrl+z
+
+    if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+        return pmcu_error;
+    }
+    if (strcmp(modem_buffer, "SEND OK") != 0 && strcmp(modem_buffer, "OK") != 0) { // for some strange reason could return OK
+        return SIM800L_UNEXPECTED_RESPONSE_ERROR;
+    }
+
     return PMCU_OK;
 }
 
@@ -296,6 +274,6 @@ inline PMCU_Error modem_tcp_recv(uint8_t *buffer, size_t buffer_length) {
 
 PMCU_Error modem_tcp_disconnect() {
     modem_execute("AT+CIPCLOSE");
-    modem_read(modem_res_cmp);
-    return PMCU_OK;
+    pmcu_error = modem_read(modem_buffer);
+    return pmcu_error;
 }
