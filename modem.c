@@ -69,21 +69,21 @@ void modem_execute(const char *cmd) {
 }
 
 PMCU_Error modem_sync() {
-    size_t i;
+    uint8_t tmp;
 
-    uart_write(UART_A0, 27); // 27 = ESC key, if was sending something exits
+    /* Try to exit AT+CIPSEND state if was in */
+    uart_write(UART_A0, 27);
 
-    for (i = MODEM_SYNC_RETRIALS; i > 0; i--) {
+    /* Wait until the modem is awake */
+    while (1) {
         modem_execute("AT");
-        if (uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, 3) != PMCU_OK) { // delay of 3 seconds
+        if (uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, 3) != PMCU_OK) {
             continue;
         }
+        break;
     }
 
-    return PMCU_OK;
-}
-
-PMCU_Error modem_reset() {
+    /* Reset modem to default state */
     modem_execute("ATZ");
     uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, MODEM_COMMAND_TIMEOUT);
 
@@ -102,6 +102,26 @@ PMCU_Error modem_reset() {
     if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
         return pmcu_error;
     }
+
+    /* Wait until find an available network */
+    while (1) {
+        __delay_cycles(12288000 * 3);
+        modem_execute("AT+CREG?");
+        if ((pmcu_error = modem_read(modem_buffer)) != PMCU_OK) {
+            continue;
+        }
+        tmp = strcmp(modem_buffer, "+CREG: 0,1") != 0 && strcmp(modem_buffer, "+CREG: 0,5") != 0;
+        if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+            continue;
+        }
+        if (tmp) {
+            continue;
+        }
+        break;
+    }
+
+    /* Wait a few seconds to settle */
+    __delay_cycles(12288000 * 3);
 
     return PMCU_OK;
 }

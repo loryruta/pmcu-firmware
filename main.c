@@ -157,11 +157,8 @@ int main() {
     uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
     uart_hub_select(1);
 
-    PMCU_log("Syncing modem...");
+    PMCU_log("Syncing & resetting modem...");
     __pmcu_assert("modem", modem_sync());
-
-    PMCU_log("Resetting modem...");
-    __pmcu_assert("modem", modem_reset());
 
     PMCU_log("Attaching GPRS service to modem...");
     __pmcu_assert("modem", modem_gprs_attach());
