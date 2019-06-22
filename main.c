@@ -30,17 +30,23 @@ void overclock_to_12mhz() {
 }
 
 size_t pmcu_read_dht22(uint8_t *buffer) {
+    PMCU_log("Reading from DHT22...");
+
     uart_hub_select(0);
 
     if ((pmcu_error = dht22_read(buffer)) == PMCU_OK) {
         return 4;
     } else {
-        PMCU_log("Error during DHT22 data reading");
+        PMCU_log("Error during DHT22 data reading:");
+        PMCU_log(PMCU_error_str(pmcu_error));
+
         return 0;
     }
 }
 
 size_t pmcu_read_gps(uint8_t *buffer) {
+    PMCU_log("Reading from GY-GPSM6V2...");
+
     uart_hub_select(0);
     uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
     uart_hub_select(2);
@@ -48,12 +54,16 @@ size_t pmcu_read_gps(uint8_t *buffer) {
     if ((pmcu_error = gps_read_sentence("$GPGGA,", (char *) buffer)) == PMCU_OK) {
         return strlen((char *) buffer) + 1;
     } else {
-        PMCU_log("Error during GY-GPSM6V2 data reading");
+        PMCU_log("Error during GY-GPSM6V2 data reading:");
+        PMCU_log(PMCU_error_str(pmcu_error));
+
         return 0;
     }
 }
 
 size_t pmcu_read_modem_location(uint8_t *buffer) {
+    PMCU_log("Reading from SIM800L...");
+
     uart_hub_select(0);
     uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
     uart_hub_select(1);
@@ -61,13 +71,17 @@ size_t pmcu_read_modem_location(uint8_t *buffer) {
     if ((pmcu_error = modem_get_location((char *) buffer)) == PMCU_OK) {
         return strlen((char *) buffer) + 1;
     } else {
-        PMCU_log("Error during SIM800L location reading");
+        PMCU_log("Error during SIM800L location reading:");
+        PMCU_log(PMCU_error_str(pmcu_error));
+
         return 0;
     }
 }
 
 size_t pmcu_read_sps30_data(uint8_t *buffer) {
     size_t payload_length;
+
+    PMCU_log("Reading from SPS30...");
 
     uart_hub_select(0);
     uart_setup(UART_A0, UART_BAUD_RATE_115200_SMCLK_12MHZ);
@@ -76,7 +90,9 @@ size_t pmcu_read_sps30_data(uint8_t *buffer) {
     if ((pmcu_error = sps30_read_measured_values(buffer, 64, &payload_length)) == PMCU_OK) {
         return payload_length;
     } else {
-        PMCU_log("Error during SPS30 data reading");
+        PMCU_log("Error during SPS30 data reading:");
+        PMCU_log(PMCU_error_str(pmcu_error));
+
         return 0;
     }
 }
@@ -184,10 +200,16 @@ int main() {
     P4DIR |= BIT7;
     P4SEL &= ~BIT7;
     P4OUT |= BIT7;
-    PMCU_log("-------------------------------- LOOPING");
+
+    PMCU_log("--------------------------------");
+    PMCU_log("LOOPING");
+    PMCU_log("--------------------------------");
 
 
     while (1) {
+        // ************** pause of 5 seconds
+        __delay_cycles(12288000 * 5);
+
         // ***************************************** Measure & pack
         PMCU_log("Measuring & packing");
 
@@ -205,7 +227,6 @@ int main() {
         if (len) {
             pos += len;
         } else {
-            PMCU_log("Repeating the measurement cycle since an error occurred");
             continue;
         }
 
@@ -223,12 +244,16 @@ int main() {
         pos = pkt_sz;
         pkt_sz = mqtt_create_connect_packet(&buffer[pos], pmcu_id, NULL, NULL);
         if (modem_tcp_connect(PMCU_SETTINGS_BROKER_ADDR, PMCU_SETTINGS_BROKER_PORT) != PMCU_OK) {
-            PMCU_log(">> An error occured during TCP broker connection");
+            PMCU_log("Error occured during TCP broker connection:");
+            PMCU_log(PMCU_error_str(pmcu_error));
+
             continue;
         }
 
         if (mqtt_connect(&buffer[pos], pkt_sz) != PMCU_OK) {
-            PMCU_log(">> An error occured during MQTT CONNECT packet");
+            PMCU_log("Error occured during MQTT CONNECT packet:");
+            PMCU_log(PMCU_error_str(pmcu_error));
+
             continue;
         }
 
@@ -237,7 +262,9 @@ int main() {
 
         pkt_sz = pos;
         if (modem_tcp_send(buffer, pkt_sz) != PMCU_OK) {
-            PMCU_log(">> An error occured during MQTT PUBLISH packet");
+            PMCU_log("Error occured during MQTT PUBLISH packet:");
+            PMCU_log(PMCU_error_str(pmcu_error));
+
             continue;
         }
 
@@ -246,12 +273,16 @@ int main() {
 
         pkt_sz = mqtt_create_disconnect_packet(buffer);
         if (mqtt_disconnect(buffer, pkt_sz)!= PMCU_OK) {
-            PMCU_log(">> An error occured during MQTT DISCONNECT packet");
+            PMCU_log("Error occured during MQTT DISCONNECT packet:");
+            PMCU_log(PMCU_error_str(pmcu_error));
+
             continue;
         }
 
         if (modem_tcp_disconnect() != PMCU_OK) {
-            PMCU_log(">> An error occured during TCP broker disconnect");
+            PMCU_log("Error occured during TCP broker disconnect:");
+            PMCU_log(PMCU_error_str(pmcu_error));
+
             continue;
         }
 
@@ -259,8 +290,5 @@ int main() {
         P2DIR |= BIT7;
         P2SEL &= ~BIT7;
         P2OUT &= ~BIT7;
-
-        // ************** pause of 5 seconds
-        __delay_cycles(12288000 * 5);
     }
 }

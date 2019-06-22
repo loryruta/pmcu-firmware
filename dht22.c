@@ -79,6 +79,7 @@ PMCU_Error dht22_read(uint8_t *buffer) {
     }
 
     if ((error = dht22_decode_stream(dht22_stream, buffer)) != PMCU_OK) {
+        dht22_state = DHT22_IDLE;
         return error;
     }
 

@@ -71,10 +71,18 @@ void modem_execute(const char *cmd) {
 PMCU_Error modem_sync() {
     uint8_t tmp;
 
+    /*
+     * IMPORTANT:
+     * Wait some time before sending any command!
+     * If during power up SIM800L receives a command will send out
+     * RDY, Call Ready, SIM Ready messages. We want to skip them!
+     */
+    __delay_cycles(12880000 * 6);
+
     /* Try to exit AT+CIPSEND state if was in */
     uart_write(UART_A0, 27);
 
-    /* Wait until the modem is awake */
+    /* Wait for SIM800L to respond OK to AT command */
     while (1) {
         modem_execute("AT");
         if (uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, 3) != PMCU_OK) {
@@ -83,24 +91,37 @@ PMCU_Error modem_sync() {
         break;
     }
 
-    /* Reset modem to default state */
     modem_execute("ATZ");
     uart_read_until_string(UART_A0, "OK\r\n", NULL, NULL, MODEM_COMMAND_TIMEOUT);
 
-    modem_execute("ATE0");
-    uart_read_until_string(UART_A0, "\r", NULL, NULL, MODEM_COMMAND_TIMEOUT);
-    if (uart_match_string(UART_A0, "\r\nOK\r\n", MODEM_COMMAND_TIMEOUT)) {
-        return SIM800L_UNEXPECTED_RESPONSE_ERROR;
+    /* Force ATE0 */
+    while (1) {
+        modem_execute("ATE0");
+        if ((pmcu_error = uart_read_until_string(UART_A0, "\r", NULL, NULL, MODEM_COMMAND_TIMEOUT)) != PMCU_OK) {
+            continue;
+        }
+        if ((pmcu_error = uart_match_string(UART_A0, "\r\nOK\r\n", MODEM_COMMAND_TIMEOUT)) != PMCU_OK) {
+            continue;
+        }
+        break;
     }
 
-    modem_execute("AT+CMEE=2");
-    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
-        return pmcu_error;
+    /* Force AT+CMEE=2 */
+    while (1) {
+        modem_execute("AT+CMEE=2");
+        if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+            continue;
+        }
+        break;
     }
 
-    modem_execute("AT+CIPSPRT=1");
-    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
-        return pmcu_error;
+    /* Force AT+CIPSPRT=1 */
+    while (1) {
+        modem_execute("AT+CIPSPRT=1");
+        if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+            continue;
+        }
+        break;
     }
 
     /* Wait until find an available network */
