@@ -172,9 +172,13 @@ PMCU_Error modem_get_location(char *location) {
 }
 
 PMCU_Error modem_gprs_attach() {
-    modem_execute("AT+CGATT=1");
-    if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
-        return pmcu_error;
+    /* Force AT+CGATT=1 */
+    while (1) {
+        modem_execute("AT+CGATT=1");
+        if ((pmcu_error = modem_read_and_expect("OK")) != PMCU_OK) {
+            continue;
+        }
+        break;
     }
 
     // ************************************************** bearer profile creation for at+cipgsmloc
