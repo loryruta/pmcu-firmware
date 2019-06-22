@@ -72,9 +72,9 @@ void write_buffer(uint8_t *command, size_t length) {
 }
 
 PMCU_Error read_byte(uint8_t *byte) {
-    uart_read(UART_A0, byte, NULL);
+    uart_read(UART_A0, byte, SPS30_TIMEOUT);
     if (*byte == 0x7D) {
-        uart_read(UART_A0, byte, NULL);
+        uart_read(UART_A0, byte, SPS30_TIMEOUT);
         switch (*byte) {
         case 0x5E:
             *byte = 0x7E;
@@ -142,25 +142,25 @@ PMCU_Error recv_shdlc_frame(uint8_t *buffer, size_t buffer_length, size_t *paylo
     PMCU_Error error;
 
     // start
-    uart_read(UART_A0, &byte, NULL);
+    uart_read(UART_A0, &byte, SPS30_TIMEOUT);
     if (byte != 0x7E) {
         return SPS30_START_BYTE_EXPECTED;
     }
 
     // address
-    uart_read(UART_A0, &byte, NULL);
+    uart_read(UART_A0, &byte, SPS30_TIMEOUT);
     checksum = byte;
 
     // command
-    uart_read(UART_A0, &byte, NULL);
+    uart_read(UART_A0, &byte, SPS30_TIMEOUT);
     checksum += byte;
 
     // state
-    uart_read(UART_A0, &state, NULL);
+    uart_read(UART_A0, &state, SPS30_TIMEOUT);
     checksum += state;
 
     // length
-    uart_read(UART_A0, &length, NULL);
+    uart_read(UART_A0, &length, SPS30_TIMEOUT);
     checksum += length;
     *payload_length = length;
 
@@ -180,14 +180,14 @@ PMCU_Error recv_shdlc_frame(uint8_t *buffer, size_t buffer_length, size_t *paylo
     }
 
     // checksum
-    uart_read(UART_A0, &byte, NULL);
+    uart_read(UART_A0, &byte, SPS30_TIMEOUT);
     checksum = ~checksum;
     if (checksum != byte) {
         return SPS30_WRONG_CHECKSUM;
     }
 
     // stop
-    uart_read(UART_A0, &byte, NULL);
+    uart_read(UART_A0, &byte, SPS30_TIMEOUT);
     if (byte != 0x7E) {
         return SPS30_STOP_BYTE_EXPECTED;
     }
@@ -225,7 +225,7 @@ int sps30_stop_measurement() {
     uint8_t command[] = {0x7E, 0x00, 0x01, 0x00, 0xFE, 0x7E};
     uart_write_buffer(UART_A0, command, 6);
 
-    uart_read_buffer(UART_A0, command, 7, 0); // ACK
+    uart_read_buffer(UART_A0, command, 7, SPS30_TIMEOUT); // ACK
     return 0;
 }
 
@@ -242,7 +242,7 @@ int sps30_ask_cleaning_interval() {
 
 int sps30_read_cleaning_interval() {
     unsigned char array[11];
-    uart_read_buffer(UART_A0, array, 11, 0);
+    uart_read_buffer(UART_A0, array, 11, SPS30_TIMEOUT);
     return 0;
 }
 
@@ -253,6 +253,6 @@ int sps30_start_fan_cleaning() {
 }
 
 int sps30_read_fan_ack(unsigned char* buff) {
-    uart_read_buffer(UART_A0, buff, 7, 0);
+    uart_read_buffer(UART_A0, buff, 7, SPS30_TIMEOUT);
     return 0;
 }

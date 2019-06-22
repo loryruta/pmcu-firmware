@@ -24,9 +24,6 @@ void timer_init() {
     TA1CTL = TASSEL__ACLK | MC__UP | ID__8;
     TA1CCTL0 &= ~CCIFG;
     TA1CCTL0 |= CCIE;
-
-    P1DIR |= BIT0; // timer period visual
-    P1OUT &= ~BIT0;
 }
 
 uint64_t timer_timestamp() {
@@ -61,8 +58,6 @@ __interrupt void timer_on_tick() {
     uint8_t i;
 
     timer_counter++;
-
-    P1OUT ^= BIT0;
 
     for (i = 1; i < TIMER_TASKS_RLENGTH; i++) {
         if (timer_tasks[i] && (timer_counter - timer_tasks[i]->started_at) >= timer_tasks[i]->delay) {

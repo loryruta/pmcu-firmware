@@ -4,6 +4,8 @@
 #include "uart.h"
 #include "error.h"
 
+#define SPS30_TIMEOUT 5
+
 /**
  * This must be used as the very first command.
  * It switches the state of SPS30 from IDLE-MODE to MEASURING-MODE.

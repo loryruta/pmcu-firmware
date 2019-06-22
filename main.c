@@ -32,9 +32,10 @@ void overclock_to_12mhz() {
 size_t pmcu_read_dht22(uint8_t *buffer) {
     uart_hub_select(0);
 
-    if (dht22_read(buffer) == PMCU_OK) {
+    if ((pmcu_error = dht22_read(buffer)) == PMCU_OK) {
         return 4;
     } else {
+        PMCU_log("Error during DHT22 data reading");
         return 0;
     }
 }
@@ -44,9 +45,10 @@ size_t pmcu_read_gps(uint8_t *buffer) {
     uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
     uart_hub_select(2);
 
-    if (gps_read_sentence("$GPGGA,", (char *) buffer) == PMCU_OK) {
+    if ((pmcu_error = gps_read_sentence("$GPGGA,", (char *) buffer)) == PMCU_OK) {
         return strlen((char *) buffer) + 1;
     } else {
+        PMCU_log("Error during GY-GPSM6V2 data reading");
         return 0;
     }
 }
@@ -56,9 +58,10 @@ size_t pmcu_read_modem_location(uint8_t *buffer) {
     uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
     uart_hub_select(1);
 
-    if (modem_get_location((char *) buffer) == PMCU_OK) {
+    if ((pmcu_error = modem_get_location((char *) buffer)) == PMCU_OK) {
         return strlen((char *) buffer) + 1;
     } else {
+        PMCU_log("Error during SIM800L location reading");
         return 0;
     }
 }
@@ -70,9 +73,10 @@ size_t pmcu_read_sps30_data(uint8_t *buffer) {
     uart_setup(UART_A0, UART_BAUD_RATE_115200_SMCLK_12MHZ);
     uart_hub_select(3);
 
-    if (sps30_read_measured_values(buffer, 64, &payload_length) == PMCU_OK) {
+    if ((pmcu_error = sps30_read_measured_values(buffer, 64, &payload_length)) == PMCU_OK) {
         return payload_length;
     } else {
+        PMCU_log("Error during SPS30 data reading");
         return 0;
     }
 }
@@ -129,6 +133,10 @@ int main() {
 
     // ***************************************** HW init
 
+    P1DIR |= BIT0;
+    P1SEL &= ~BIT0;
+    P1OUT |= BIT0;
+
     overclock_to_12mhz();
 
     uart_setup(UART_A1, UART_BAUD_RATE_9600_SMCLK_12MHZ); // logger init
@@ -183,6 +191,11 @@ int main() {
         // ***************************************** Measure & pack
         PMCU_log("Measuring & packing");
 
+        // When starts measuring turns on the blue led.
+        P2DIR |= BIT7;
+        P2SEL &= ~BIT7;
+        P2OUT |= BIT7;
+
         pos = 4;
 
         pos += mqtt_pack_string(&buffer[pos], pmcu_id);
@@ -192,22 +205,19 @@ int main() {
         if (len) {
             pos += len;
         } else {
-            PMCU_log(">> An error occured during measurements (sensors could be unreachable)");
+            PMCU_log("Repeating the measurement cycle since an error occurred");
             continue;
         }
 
         pkt_sz = pos;
         mqtt_pack_fixed_header(buffer, 0b00110000, pkt_sz - 4);
 
-        if (pkt_sz < 120) {
-            __no_operation();
-        }
-
         uart_hub_select(0); // selects back modem
         uart_setup(UART_A0, UART_BAUD_RATE_9600_SMCLK_12MHZ);
         uart_hub_select(1);
 
         // ***************************************** MQTT connect
+
         PMCU_log("Connecting to broker at "PMCU_SETTINGS_BROKER_ADDR":"PMCU_SETTINGS_BROKER_PORT);
 
         pos = pkt_sz;
@@ -244,6 +254,11 @@ int main() {
             PMCU_log(">> An error occured during TCP broker disconnect");
             continue;
         }
+
+        // When the whole thing has finished, turns off the blue led.
+        P2DIR |= BIT7;
+        P2SEL &= ~BIT7;
+        P2OUT &= ~BIT7;
 
         // ************** pause of 5 seconds
         __delay_cycles(12288000 * 5);
